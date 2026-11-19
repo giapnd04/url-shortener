@@ -1,15 +1,30 @@
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using UrlShortener.Api;
+using UrlShortener.Api.Auth;
+using UrlShortener.Api.Errors;
+using UrlShortener.Api.Links;
 using UrlShortener.Infrastructure;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddProblemDetails();
+builder.Services.AddExceptionHandler<CodeGenerationExhaustedHandler>();
 builder.Services.AddInfrastructure();
+builder.Services.AddSingleton<PublicUrl>();
+
+builder.Services
+    .AddAuthentication(ApiKeyAuthenticationHandler.SchemeName)
+    .AddScheme<AuthenticationSchemeOptions, ApiKeyAuthenticationHandler>(ApiKeyAuthenticationHandler.SchemeName, null);
+builder.Services.AddAuthorization();
 
 var app = builder.Build();
 
 app.UseExceptionHandler();
 app.UseStatusCodePages();
+
+app.UseAuthentication();
+app.UseAuthorization();
 
 // Liveness: the process is up. No dependency checks, so a slow database
 // never makes an orchestrator restart a healthy process.
@@ -21,10 +36,11 @@ app.MapHealthChecks("/health/ready", new HealthCheckOptions
     Predicate = check => check.Tags.Contains(InfrastructureSetup.ReadyTag)
 });
 
-// Management API under /api/links (X-Api-Key) arrives on Day 16: US-01 create, US-03 manage.
+// Management API under /api/links (X-Api-Key) and public redirect GET /{code}.
+// See docs/03-api-contract.md.
+app.MapLinkEndpoints();
 
-// Public redirect GET /{code} (US-02) also arrives on Day 16, with a route constraint
-// so it never matches /api or /health. See docs/03-api-contract.md.
+await DevSeed.RunAsync(app);
 
 app.Run();
 

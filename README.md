@@ -4,7 +4,7 @@ URL shortener viết bằng ASP.NET Core 9 (Minimal API), EF Core 9 và SQL Serv
 
 Giá trị của project không nằm ở tính năng rút gọn link mà ở quá trình đo có kiểm soát: dựng bản chỉ dùng SQL, đo baseline, thêm Redis cache-aside, xử lý khi Redis lỗi, rồi đo lại trong cùng điều kiện. Mọi con số hiệu năng trong repo phải có file kết quả gốc và commit đi kèm.
 
-Trạng thái hiện tại: khung code base (Ngày 15). Chưa có endpoint nghiệp vụ.
+Trạng thái hiện tại (Ngày 16): tạo link, redirect 302/404/410 và quản lý link bằng API key chạy trên SQL Server, chưa có Redis.
 
 ## Problem
 
@@ -38,13 +38,28 @@ Vì sao chỉ 2 project mà không dùng Clean Architecture như OrderFlow: xem 
 
 ## Chạy local
 
-Cách 1, dùng LocalDB (Windows):
+Cách 1, dùng LocalDB (Windows). Chưa có endpoint tạo API client, nên ở môi trường Development app đọc Seed:DevApiKey từ user-secrets, tự chạy migration và tạo client "dev" với key đó:
 
 ```powershell
+dotnet user-secrets set "Seed:DevApiKey" "dev-local-key-change-me" --project src/UrlShortener.Api
 dotnet run --project src/UrlShortener.Api
 ```
 
-Rồi mở http://localhost:5100/health/live và http://localhost:5100/health/ready.
+Rồi thử:
+
+```powershell
+curl.exe -s -H "X-Api-Key: dev-local-key-change-me" -H "Content-Type: application/json" -d '{\"url\":\"https://example.com\"}' http://localhost:5100/api/links
+curl.exe -s -i http://localhost:5100/<code>
+```
+
+Health: http://localhost:5100/health/live và http://localhost:5100/health/ready.
+
+Tạo migration mới (tool dotnet-ef đã khai báo trong .config/dotnet-tools.json):
+
+```powershell
+dotnet tool restore
+dotnet ef migrations add <Ten> --project src/UrlShortener.Infrastructure --startup-project src/UrlShortener.Api --output-dir Data/Migrations
+```
 
 Cách 2, dùng Docker Compose:
 
@@ -55,7 +70,7 @@ docker compose up --build
 
 Rồi mở http://localhost:8080/health/ready.
 
-Chạy test:
+Chạy test. Integration test dùng Testcontainers dựng SQL Server 2022 thật, nên cần Docker Desktop đang chạy:
 
 ```powershell
 dotnet test UrlShortener.sln
