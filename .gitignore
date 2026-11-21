@@ -482,3 +482,6 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
+
+# Benchmark trial runs from an uncommitted tree are never kept
+benchmarks/results/**/*-dirty*

@@ -1,0 +1,35 @@
+# Benchmark override (US-04). Used only by benchmarks/run-baseline.ps1:
+#   docker compose -f docker-compose.yml -f benchmarks/docker-compose.bench.yml ...
+#
+# - The api image is built by the runner from `git archive <commit>`, so what is measured is
+#   exactly that commit, not whatever is in the working tree.
+# - Fixed CPU/memory limits make runs comparable and are written into the result file.
+# - k6 runs in a container on the same Docker network (and the same machine, so it competes
+#   for CPU with the API: recorded as a limitation in the report).
+
+services:
+  sqlserver:
+    cpus: 2
+    mem_limit: 2g
+
+  api:
+    image: ${BENCH_API_IMAGE:?set by run-baseline.ps1}
+    pull_policy: never
+    cpus: 2
+    mem_limit: 1g
+    environment:
+      Diagnostics__ExposeQueryCounter: "true"
+      # Keep per-request logging out of the measurement.
+      Logging__LogLevel__Default: Warning
+      Logging__LogLevel__Microsoft.EntityFrameworkCore: Warning
+
+  k6:
+    image: grafana/k6:0.54.0
+    profiles: [bench]
+    depends_on:
+      api:
+        condition: service_started
+    volumes:
+      # Relative paths resolve from the project directory (repo root), not from this file.
+      - ./benchmarks:/bench
+    working_dir: /bench

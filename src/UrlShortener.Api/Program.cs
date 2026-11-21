@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using UrlShortener.Api;
 using UrlShortener.Api.Auth;
+using UrlShortener.Api.Diagnostics;
 using UrlShortener.Api.Errors;
 using UrlShortener.Api.Links;
 using UrlShortener.Infrastructure;
@@ -39,6 +40,9 @@ app.MapHealthChecks("/health/ready", new HealthCheckOptions
 // Management API under /api/links (X-Api-Key) and public redirect GET /{code}.
 // See docs/03-api-contract.md.
 app.MapLinkEndpoints();
+
+// Benchmark harness only (US-04), off unless Diagnostics:ExposeQueryCounter=true.
+app.MapDiagnosticsEndpoints(app.Configuration);
 
 await DevSeed.RunAsync(app);
 
