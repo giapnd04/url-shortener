@@ -1,4 +1,4 @@
-# Local stack for v0.1 (SQL baseline): SQL Server + the API. Redis joins in v0.2.
+# Local stack: SQL Server (source of truth) + Redis (cache-aside, disposable) + the API.
 # Copy .env.example to .env first, then:
 #   docker compose up --build
 #   curl http://localhost:8080/health/ready
@@ -20,20 +20,39 @@ services:
       retries: 12
       start_period: 20s
 
+  redis:
+    image: redis:7.4-alpine
+    # Bounded memory; when full, evict the least recently used keys (Redis uses approximated LRU by sampling).
+    # No persistence: the cache is disposable, SQL Server is the source of truth.
+    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   api:
     build: .
     depends_on:
       sqlserver:
         condition: service_healthy
+      # Only "started": the API must come up and serve from SQL even if Redis is down (US-08).
+      redis:
+        condition: service_started
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ConnectionStrings__UrlShortener: "Server=sqlserver;Database=UrlShortener;User Id=sa;Password=${MSSQL_SA_PASSWORD};TrustServerCertificate=True"
+      ConnectionStrings__Redis: "redis:6379"
     ports:
-      - "8080:8080"
+      # Host port is configurable (API_PORT) in case 8080 is taken on the host.
+      - "${API_PORT:-8080}:8080"
     healthcheck:
       # The aspnet image has no curl, so speak HTTP over bash's /dev/tcp.
+      # Must run bash explicitly: CMD-SHELL uses /bin/sh (dash), which has no /dev/tcp.
       test:
-        - CMD-SHELL
+        - CMD
+        - bash
+        - -c
         - >-
           exec 3<>/dev/tcp/127.0.0.1/8080 &&
           printf 'GET /health/ready HTTP/1.0\r\n\r\n' >&3 &&

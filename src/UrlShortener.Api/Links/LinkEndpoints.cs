@@ -111,9 +111,10 @@ public static class LinkEndpoints
 
     /// <summary>302, not 301: browsers cache 301 forever, so later edits/disables and click counting would be lost (ADR-002).</summary>
     private static async Task<IResult> RedirectAsync(
-        string code, LinkService service, TimeProvider time, CancellationToken ct)
+        string code, IRedirectReader reader, TimeProvider time, CancellationToken ct)
     {
-        var target = await service.GetRedirectTargetAsync(code, ct);
+        // Cache-aside or plain SQL, depending on Cache:Provider; the endpoint does not care which.
+        var target = await reader.GetAsync(code, ct);
         if (target is null)
         {
             return TypedResults.NotFound();

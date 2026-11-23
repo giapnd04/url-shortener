@@ -1,10 +1,19 @@
 # URL Shortener
 
-URL shortener viết bằng ASP.NET Core 9 (Minimal API), EF Core 9 và SQL Server 2022. Redis sẽ được thêm sau, có chủ đích.
+URL shortener viết bằng ASP.NET Core 9 (Minimal API), EF Core 9, SQL Server 2022 và Redis 7.4 (cache-aside).
 
 Giá trị của project không nằm ở tính năng rút gọn link mà ở quá trình đo có kiểm soát: dựng bản chỉ dùng SQL, đo baseline, thêm Redis cache-aside, xử lý khi Redis lỗi, rồi đo lại trong cùng điều kiện. Mọi con số hiệu năng trong repo phải có file kết quả gốc và commit đi kèm.
 
-Trạng thái hiện tại (Ngày 16): tạo link, redirect 302/404/410 và quản lý link bằng API key chạy trên SQL Server, chưa có Redis.
+Trạng thái hiện tại (Ngày 20): tạo link, redirect 302/404/410, quản lý link bằng API key; Redis cache-aside cho redirect, xoá cache sau khi sửa/disable, Redis lỗi thì đọc thẳng SQL. Bộ đo k6 đã có; baseline SQL chính thức chưa đo (xem benchmarks/run-baseline.ps1).
+
+## Cache
+
+- Redirect đi qua IRedirectReader. Khi bật cache, SqlRedirectReader được bọc bởi CachedRedirectReader (Decorator): đọc Redis trước, miss thì đọc SQL rồi ghi Redis với TTL = min(Cache:LinkTtl, thời gian còn lại của link). Code không tồn tại không bị cache.
+- Key link:v1:{code}, value JSON gọn {t, s, e, u}.
+- Cache:Provider chọn Redis, Memory (LRU trong process, Singleton) hoặc None. Bỏ trống thì có ConnectionStrings:Redis là Redis, không có là None.
+- Sửa hoặc disable link: commit SQL trước, rồi xoá key. Xoá lỗi chỉ log Warning; TTL là giới hạn trên cho dữ liệu cũ.
+- Redis chết: lệnh Redis fail ngay (BacklogPolicy.FailFast, timeout 250 ms), redirect đọc SQL, log Warning tối đa 10 giây một lần, /health/ready báo Degraded nhưng vẫn 200. Redis lên lại thì tự dùng cache, không cần restart API.
+- Giới hạn đã biết: chưa có negative caching (US-06) và chống stampede (US-09), cả hai để giai đoạn 2. Cache Memory là riêng từng instance, nên xoá cache ở instance này không tới instance khác.
 
 ## Problem
 
@@ -70,7 +79,7 @@ docker compose up --build
 
 Rồi mở http://localhost:8080/health/ready.
 
-Chạy test. Integration test dùng Testcontainers dựng SQL Server 2022 thật, nên cần Docker Desktop đang chạy:
+Chạy test. Integration test dùng Testcontainers dựng SQL Server 2022 và Redis 7.4 thật, nên cần Docker Desktop đang chạy:
 
 ```powershell
 dotnet test UrlShortener.sln
@@ -84,5 +93,16 @@ dotnet test UrlShortener.sln
 - docs/adr/ADR-001-short-code-strategy.md
 - docs/adr/ADR-002-redirect-status-code.md
 - docs/adr/ADR-007-architecture-minimal-api.md
+- docs/design-patterns.md
+
+## Đo hiệu năng
+
+Cần Docker Desktop và không có container nào khác đang chạy (chúng chia CPU và làm sai số đo; script sẽ từ chối chạy, trừ khi truyền -AllowOtherContainers và việc đó sẽ được ghi vào kết quả):
+
+```powershell
+./benchmarks/run-baseline.ps1 -Commit <commit-cần-đo>
+```
+
+Script build API từ git archive của commit đó, nạp 100k link cố định, chạy k6 3 lần và ghi benchmarks/results/baseline-<commit>.json.
 
 ADR-003 (caching pattern), ADR-004 (invalidation), ADR-005 (Redis lỗi), ADR-006 (analytics) sẽ viết khi tới phần tương ứng.

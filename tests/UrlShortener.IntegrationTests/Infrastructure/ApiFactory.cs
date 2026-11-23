@@ -5,28 +5,40 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using StackExchange.Redis;
 using Testcontainers.MsSql;
+using Testcontainers.Redis;
 using UrlShortener.Api.Auth;
 using UrlShortener.Infrastructure;
 using UrlShortener.Infrastructure.Auth;
+using UrlShortener.Infrastructure.Caching;
 using UrlShortener.Infrastructure.Data;
 using UrlShortener.Infrastructure.Links;
 
 namespace UrlShortener.IntegrationTests.Infrastructure;
 
 /// <summary>
-/// One real SQL Server 2022 container for the whole collection (needs a running Docker daemon).
-/// Tests share the database, so each test creates its own client and its own codes.
+/// Real SQL Server 2022 and Redis 7.4 containers for the whole collection (needs a running Docker daemon).
+/// Tests share the database and Redis, so each test creates its own client and its own codes.
 /// </summary>
-public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
+public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
 {
     private readonly MsSqlContainer _sql = new MsSqlBuilder()
         .WithImage("mcr.microsoft.com/mssql/server:2022-latest")
         .Build();
 
+    private RedisContainer? _redis;
+
+    public RedisContainer Redis => _redis ?? throw new InvalidOperationException("Not initialised.");
+
+    /// <summary>Overridden by the outage tests to pin a host port that survives a container restart.</summary>
+    protected virtual RedisContainer CreateRedisContainer() =>
+        new RedisBuilder().WithImage("redis:7.4-alpine").Build();
+
     public async Task InitializeAsync()
     {
-        await _sql.StartAsync();
+        _redis = CreateRedisContainer();
+        await Task.WhenAll(_sql.StartAsync(), _redis.StartAsync());
 
         await using var scope = Services.CreateAsyncScope();
         await scope.ServiceProvider.GetRequiredService<UrlShortenerDbContext>().Database.MigrateAsync();
@@ -36,7 +48,13 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
     {
         await base.DisposeAsync();
         await _sql.DisposeAsync();
+        if (_redis is not null)
+        {
+            await _redis.DisposeAsync();
+        }
     }
+
+    protected virtual string RedisConnectionString => Redis.GetConnectionString();
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -45,9 +63,22 @@ public sealed class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         builder.ConfigureAppConfiguration(config => config.AddInMemoryCollection(new Dictionary<string, string?>
         {
             [$"ConnectionStrings:{InfrastructureSetup.ConnectionStringName}"] = _sql.GetConnectionString(),
+            [$"ConnectionStrings:{CacheOptions.RedisConnectionStringName}"] = RedisConnectionString,
             ["App:PublicBaseUrl"] = "https://sho.rt",
         }));
     }
+
+    /// <summary>A separate Redis client for assertions (key exists, TTL), independent of the app's multiplexer.</summary>
+    public async Task<IDatabase> RedisDbAsync()
+    {
+        _assertRedis ??= await ConnectionMultiplexer.ConnectAsync(RedisConnectionString + ",abortConnect=false");
+        return _assertRedis.GetDatabase();
+    }
+
+    private IConnectionMultiplexer? _assertRedis;
+
+    public WebApplicationFactory<Program> WithServices(Action<IServiceCollection> configure) =>
+        WithWebHostBuilder(b => b.ConfigureTestServices(configure));
 
     /// <summary>A factory whose code generator returns the given codes in order (then repeats the last one).</summary>
     public WebApplicationFactory<Program> WithCodes(FakeCodeGenerator generator) =>

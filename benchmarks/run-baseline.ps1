@@ -23,7 +23,10 @@ param(
     [string]$Duration = "60s",
     [string]$WarmUp = "20s",
     [string]$Name = "baseline",
+    # Host port for the API; only used to reach the /_diag counter (k6 talks to api:8080 inside Docker).
+    [int]$ApiPort = 18080,
     [switch]$WorkingTree,
+    [switch]$AllowOtherContainers,
     [switch]$Down
 )
 
@@ -52,17 +55,27 @@ function Get-SpreadPercent([double[]]$Values) {
 }
 
 if (-not (Test-Path .env)) { throw ".env not found. Copy .env.example to .env first." }
+
+# Other containers on the same Docker VM share its CPUs and would skew the numbers.
+$others = @(docker ps --format '{{.Names}}' | Where-Object { $_ -and $_ -notlike 'url-shortener-*' })
+if ($others.Count -gt 0 -and -not $AllowOtherContainers) {
+    throw "Other containers are running and would compete for CPU: $($others -join ', '). Stop them, or pass -AllowOtherContainers (recorded in the result)."
+}
 $saPassword = (Get-Content .env | Where-Object { $_ -match '^MSSQL_SA_PASSWORD=' }) -replace '^MSSQL_SA_PASSWORD=', ''
 
 $sha = (git rev-parse $Commit).Trim()
 $sha7 = $sha.Substring(0, 7)
-$dirtyFiles = git status --porcelain | Where-Object { $_ -notmatch 'benchmarks/results/' }
-$dirty = [bool]$WorkingTree -or [bool]$dirtyFiles
+# The API image comes from `git archive $Commit`, so uncommitted files cannot change the measured
+# API code; only -WorkingTree makes the measurement "dirty". Uncommitted harness files (k6 script,
+# compose, this runner) can still matter, so they are listed in the result instead of hidden.
+$harnessChanges = @(git status --porcelain | Where-Object { $_ -notmatch 'benchmarks/results/' } | ForEach-Object { $_.Trim() })
+$dirty = [bool]$WorkingTree
 $label = $sha7
 if ($dirty) { $label = "$sha7-dirty" }
 
 $image = "urlshortener-api:bench-$label"
 $env:BENCH_API_IMAGE = $image
+$env:API_PORT = "$ApiPort"
 $compose = @("compose", "-f", "docker-compose.yml", "-f", "benchmarks/docker-compose.bench.yml")
 
 Write-Host "== Building $image"
@@ -96,7 +109,7 @@ $sqlVersion = (docker @compose @sqlcmd -h -1 -W -Q "SET NOCOUNT ON; SELECT CAST(
 Write-Host "== Starting API (force-recreate so it runs the image just built)"
 Invoke-Native "compose up api" { docker @compose up -d --wait --force-recreate --no-build api }
 
-$base = "http://localhost:8080"
+$base = "http://localhost:$ApiPort"
 $raw = "benchmarks/results/raw"
 New-Item -ItemType Directory -Force $raw | Out-Null
 
@@ -151,6 +164,8 @@ $result = [ordered]@{
     name        = $Name
     commit      = $sha
     dirty       = $dirty
+    apiCodeFromCommit = -not $dirty
+    harnessChanges    = $harnessChanges
     measuredAt  = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
     environment = [ordered]@{
         cpu            = "$($cpu.Name.Trim()) ($($cpu.NumberOfCores) cores / $($cpu.NumberOfLogicalProcessors) threads)"
@@ -161,7 +176,8 @@ $result = [ordered]@{
         sqlServer      = $sqlVersion
         redis          = "none (SQL-only baseline)"
         k6             = $k6Version
-        loadGenerator  = "k6 in a container on the same machine and Docker network as the API; it competes for CPU (limitation)"
+        otherContainers = $others
+        loadGenerator  ="k6 in a container on the same machine and Docker network as the API; it competes for CPU (limitation)"
     }
     dataset     = [ordered]@{
         links   = 100000

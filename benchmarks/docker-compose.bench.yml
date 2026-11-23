@@ -19,6 +19,8 @@ services:
     mem_limit: 1g
     environment:
       Diagnostics__ExposeQueryCounter: "true"
+      # Mode A (no cache) by default; set BENCH_CACHE_PROVIDER=Redis for mode B. Ignored by pre-cache images.
+      Cache__Provider: ${BENCH_CACHE_PROVIDER:-None}
       # Keep per-request logging out of the measurement.
       Logging__LogLevel__Default: Warning
       Logging__LogLevel__Microsoft.EntityFrameworkCore: Warning

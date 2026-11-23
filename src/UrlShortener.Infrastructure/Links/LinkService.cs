@@ -1,6 +1,7 @@
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using UrlShortener.Infrastructure.Caching;
 using UrlShortener.Infrastructure.Data;
 using UrlShortener.Infrastructure.Data.Configurations;
 
@@ -14,8 +15,8 @@ public sealed record LinkView(
     DateTime? ExpiresAt,
     DateTime? DisabledAt);
 
-/// <summary>Only the columns redirect needs (projection keeps the read narrow).</summary>
-public sealed record RedirectTarget(string TargetUrl, DateTime? ExpiresAt, DateTime? DisabledAt);
+/// <summary>Only the columns redirect needs (projection keeps the read narrow). Also the cached value.</summary>
+public sealed record RedirectTarget(string TargetUrl, DateTime? ExpiresAt, DateTime? DisabledAt, DateTime UpdatedAt);
 
 public sealed record PagedLinks(IReadOnlyList<LinkView> Items, int Page, int PageSize, int TotalCount);
 
@@ -29,6 +30,7 @@ public sealed class CodeGenerationExhaustedException(int attempts)
 public sealed class LinkService(
     UrlShortenerDbContext db,
     IShortCodeGenerator generator,
+    ILinkCache cache,
     TimeProvider time,
     ILogger<LinkService> logger)
 {
@@ -68,14 +70,6 @@ public sealed class LinkService(
         logger.LogError("Short code generation exhausted after {MaxAttempts} attempts", MaxCreateAttempts);
         throw new CodeGenerationExhaustedException(MaxCreateAttempts);
     }
-
-    /// <summary>Single query: index seek on UX_short_links_code, no tracking, three columns.</summary>
-    public Task<RedirectTarget?> GetRedirectTargetAsync(string code, CancellationToken ct) =>
-        db.ShortLinks
-            .AsNoTracking()
-            .Where(l => l.Code == code)
-            .Select(l => new RedirectTarget(l.TargetUrl, l.ExpiresAt, l.DisabledAt))
-            .FirstOrDefaultAsync(ct);
 
     public async Task<PagedLinks> ListAsync(int clientId, int page, int pageSize, CancellationToken ct)
     {
@@ -121,6 +115,7 @@ public sealed class LinkService(
 
         link.UpdatedAt = time.GetUtcNow().UtcDateTime;
         await db.SaveChangesAsync(ct);
+        await InvalidateAsync(code, ct);
         return ToView(link);
     }
 
@@ -141,7 +136,26 @@ public sealed class LinkService(
             await db.SaveChangesAsync(ct);
         }
 
+        // Also on a repeat call: cheap, and it heals a cache entry left behind by an earlier failed DEL.
+        await InvalidateAsync(code, ct);
         return true;
+    }
+
+    /// <summary>
+    /// US-07: commit to SQL first, then delete the cache entry. Deleting first would let a concurrent
+    /// redirect re-cache the old row before the commit. If the delete fails, the request still succeeds:
+    /// the entry's TTL is the upper bound on how long stale data can be served.
+    /// </summary>
+    private async Task InvalidateAsync(string code, CancellationToken ct)
+    {
+        try
+        {
+            await cache.RemoveAsync(code, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Cache invalidation failed for a link; stale entry lives until its TTL");
+        }
     }
 
     private Task<ShortLink?> FindOwnedAsync(int clientId, string code, CancellationToken ct) =>
