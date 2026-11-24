@@ -4,12 +4,12 @@ URL shortener viết bằng ASP.NET Core 9 (Minimal API), EF Core 9, SQL Server 
 
 Giá trị của project không nằm ở tính năng rút gọn link mà ở quá trình đo có kiểm soát: dựng bản chỉ dùng SQL, đo baseline, thêm Redis cache-aside, xử lý khi Redis lỗi, rồi đo lại trong cùng điều kiện. Mọi con số hiệu năng trong repo phải có file kết quả gốc và commit đi kèm.
 
-Trạng thái hiện tại (Ngày 20): tạo link, redirect 302/404/410, quản lý link bằng API key; Redis cache-aside cho redirect, xoá cache sau khi sửa/disable, Redis lỗi thì đọc thẳng SQL. Bộ đo k6 đã có; baseline SQL chính thức chưa đo (xem benchmarks/run-baseline.ps1).
+Trạng thái hiện tại (Ngày 22): tạo link, redirect 302/404/410, quản lý link bằng API key; Redis cache-aside cho redirect, xoá cache sau khi sửa/disable, Redis lỗi thì đọc thẳng SQL; click analytics đồng bộ và endpoint thống kê theo ngày (UTC). Bộ đo k6 chạy được 4 chế độ A/B/D/E, nhưng chưa có số đo thật nào. benchmarks/REPORT.md mới là khung, chưa có số.
 
 ## Cache
 
 - Redirect đi qua IRedirectReader. Khi bật cache, SqlRedirectReader được bọc bởi CachedRedirectReader (Decorator): đọc Redis trước, miss thì đọc SQL rồi ghi Redis với TTL = min(Cache:LinkTtl, thời gian còn lại của link). Code không tồn tại không bị cache.
-- Key link:v1:{code}, value JSON gọn {t, s, e, u}.
+- Key link:v2:{code}, value JSON gọn {i, t, s, e, u}. Key chuyển từ v1 sang v2 khi value thêm link id ở Ngày 22.
 - Cache:Provider chọn Redis, Memory (LRU trong process, Singleton) hoặc None. Bỏ trống thì có ConnectionStrings:Redis là Redis, không có là None.
 - Sửa hoặc disable link: commit SQL trước, rồi xoá key. Xoá lỗi chỉ log Warning; TTL là giới hạn trên cho dữ liệu cũ.
 - Redis chết: lệnh Redis fail ngay (BacklogPolicy.FailFast, timeout 250 ms), redirect đọc SQL, log Warning tối đa 10 giây một lần, /health/ready báo Degraded nhưng vẫn 200. Redis lên lại thì tự dùng cache, không cần restart API.
@@ -99,10 +99,24 @@ dotnet test UrlShortener.sln
 
 Cần Docker Desktop và không có container nào khác đang chạy (chúng chia CPU và làm sai số đo; script sẽ từ chối chạy, trừ khi truyền -AllowOtherContainers và việc đó sẽ được ghi vào kết quả):
 
+Chạy toàn bộ phép đo cho báo cáo, mất khoảng 25–30 phút:
+
 ```powershell
-./benchmarks/run-baseline.ps1 -Commit <commit-cần-đo>
+./benchmarks/run-all.ps1 -Commit HEAD
 ```
 
-Script build API từ git archive của commit đó, nạp 100k link cố định, chạy k6 3 lần và ghi benchmarks/results/baseline-<commit>.json.
+Hoặc chạy từng chế độ:
+
+```powershell
+./benchmarks/run-baseline.ps1 -Commit <commit> -Mode B -Name bench
+```
+
+Các chế độ:
+- A: không cache.
+- B: Redis đã warm.
+- D: Redis bị tắt từ trước khi warm-up, nên mọi request đều đi SQL.
+- E: Redis warm và bật analytics.
+
+Script build API từ git archive của commit cần đo, nạp 100k link cố định, chạy k6 3 lần cho mỗi chế độ rồi ghi benchmarks/results/<name>-<mode>-<commit>.json. Báo cáo nằm ở benchmarks/REPORT.md.
 
 ADR-003 (caching pattern), ADR-004 (invalidation), ADR-005 (Redis lỗi), ADR-006 (analytics) sẽ viết khi tới phần tương ứng.

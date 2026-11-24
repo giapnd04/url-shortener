@@ -65,8 +65,17 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
             [$"ConnectionStrings:{InfrastructureSetup.ConnectionStringName}"] = _sql.GetConnectionString(),
             [$"ConnectionStrings:{CacheOptions.RedisConnectionStringName}"] = RedisConnectionString,
             ["App:PublicBaseUrl"] = "https://sho.rt",
+            // Off by default so the query-count tests measure redirect alone; AnalyticsTests turn it on.
+            ["Analytics:Enabled"] = "false",
         }));
     }
+
+    /// <summary>Same app with click analytics on (a separate host sharing the same containers).</summary>
+    public WebApplicationFactory<Program> WithAnalytics() =>
+        WithWebHostBuilder(b => b.ConfigureAppConfiguration(c =>
+            c.AddInMemoryCollection(new Dictionary<string, string?> { ["Analytics:Enabled"] = "true" })));
+
+    public string SqlConnectionString => _sql.GetConnectionString();
 
     /// <summary>A separate Redis client for assertions (key exists, TTL), independent of the app's multiplexer.</summary>
     public async Task<IDatabase> RedisDbAsync()

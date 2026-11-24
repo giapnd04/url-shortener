@@ -7,8 +7,9 @@ using UrlShortener.Infrastructure.Links;
 namespace UrlShortener.Infrastructure.Caching;
 
 /// <summary>
-/// Redis implementation. Key link:v1:{code}; the "v1" lets the value format change later by moving
-/// to v2 while old keys simply expire. Value is compact JSON {t, s, e, u} (docs/02-database-design.md).
+/// Redis implementation. Key link:v2:{code}, value compact JSON {i, t, s, e, u} (docs/02-database-design.md).
+/// v1 had no "i" (link id, needed for click analytics since Day 22). Instead of migrating or flushing
+/// v1 entries, the key version moved to v2: old entries are never read again and expire by TTL.
 ///
 /// Fail-open (US-08): any Redis error or timeout is treated as a miss (Get) or a no-op (Set/Remove),
 /// so a Redis outage only makes redirects slower (they go to SQL), never failing.
@@ -20,7 +21,7 @@ public sealed class RedisLinkCache(
 {
     private readonly ThrottledWarning _warning = new(time, TimeSpan.FromSeconds(10));
 
-    public static string Key(string code) => $"link:v1:{code}";
+    public static string Key(string code) => $"link:v2:{code}";
 
     public async Task<RedirectTarget?> GetAsync(string code, CancellationToken ct)
     {
@@ -73,16 +74,17 @@ public sealed class RedisLinkCache(
 
     /// <summary>Wire format kept short on purpose: one entry per link, so bytes add up.</summary>
     private sealed record CachedLink(
+        [property: JsonPropertyName("i")] long LinkId,
         [property: JsonPropertyName("t")] string Target,
         [property: JsonPropertyName("s")] string Status,
         [property: JsonPropertyName("e")] DateTime? ExpiresAt,
         [property: JsonPropertyName("u")] DateTime UpdatedAt)
     {
         public static CachedLink From(RedirectTarget t) =>
-            new(t.TargetUrl, t.DisabledAt is null ? "active" : "disabled", t.ExpiresAt, t.UpdatedAt);
+            new(t.LinkId, t.TargetUrl, t.DisabledAt is null ? "active" : "disabled", t.ExpiresAt, t.UpdatedAt);
 
         // Only "is it disabled" matters for redirect; the exact disable time is not cached.
         public RedirectTarget ToTarget() =>
-            new(Target, ExpiresAt, Status == "disabled" ? UpdatedAt : null, UpdatedAt);
+            new(LinkId, Target, ExpiresAt, Status == "disabled" ? UpdatedAt : null, UpdatedAt);
     }
 }

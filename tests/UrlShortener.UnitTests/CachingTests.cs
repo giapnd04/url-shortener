@@ -8,7 +8,7 @@ public class CachingTests
     private static readonly DateTime Now = new(2026, 11, 23, 12, 0, 0, DateTimeKind.Utc);
 
     private static RedirectTarget Target(DateTime? expiresAt = null) =>
-        new("https://example.com", expiresAt, null, Now);
+        new(1, "https://example.com", expiresAt, null, Now);
 
     [Fact]
     public void Ttl_is_the_configured_maximum_for_links_without_expiry()

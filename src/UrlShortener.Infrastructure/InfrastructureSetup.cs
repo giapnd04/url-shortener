@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using StackExchange.Redis;
+using UrlShortener.Infrastructure.Analytics;
 using UrlShortener.Infrastructure.Caching;
 using UrlShortener.Infrastructure.Data;
 using UrlShortener.Infrastructure.Diagnostics;
@@ -27,6 +28,10 @@ public static class InfrastructureSetup
         services.AddSingleton<QueryCountingInterceptor>();
         services.AddSingleton<IShortCodeGenerator, RandomBase62CodeGenerator>();
         services.AddScoped<LinkService>();
+        services.AddSingleton<CacheStats>();
+        services.AddOptions<AnalyticsOptions>().BindConfiguration(AnalyticsOptions.Section);
+        services.AddScoped<ClickRecorder>();
+        services.AddScoped<ClickStatsService>();
 
         // Resolve the connection string lazily so tests can override configuration.
         services.AddDbContext<UrlShortenerDbContext>((sp, options) =>
@@ -108,7 +113,7 @@ public static class InfrastructureSetup
             return cache is NullLinkCache
                 ? sql
                 : new CachedRedirectReader(sql, cache, sp.GetRequiredService<TimeProvider>(),
-                    sp.GetRequiredService<IOptions<CacheOptions>>());
+                    sp.GetRequiredService<IOptions<CacheOptions>>(), sp.GetRequiredService<CacheStats>());
         });
     }
 }

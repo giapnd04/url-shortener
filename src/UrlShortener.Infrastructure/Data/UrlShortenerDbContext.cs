@@ -7,6 +7,7 @@ public sealed class UrlShortenerDbContext(DbContextOptions<UrlShortenerDbContext
 {
     public DbSet<ApiClient> ApiClients => Set<ApiClient>();
     public DbSet<ShortLink> ShortLinks => Set<ShortLink>();
+    public DbSet<ClickEvent> ClickEvents => Set<ClickEvent>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Runs the redirect benchmark (US-04) and writes benchmarks/results/<Name>-<sha7>.json.
+  Runs the redirect benchmark (US-04, US-10) and writes benchmarks/results/<Name>-<Mode>-<sha7>.json.
 
 .DESCRIPTION
   1. Builds the API image from `git archive <Commit>` so the measured code is exactly that commit
@@ -10,14 +10,24 @@
   4. For each run: k6 warm-up, reset the DB query counter, measured k6 run, read the counter.
   5. Writes per-run numbers, their median and the spread between runs, plus the environment.
 
+  Modes (same dataset, machine and script; only the API configuration differs):
+    A  no cache, analytics off            (SQL only)
+    B  Redis cache warm, analytics off    (cache-aside)
+    D  Redis stopped before warm-up       (fail-open: every request falls back to SQL)
+    E  Redis cache warm, analytics on     (one synchronous INSERT per 302; compare with B)
+  Images older than the cache (the SQL baseline commit) ignore the settings, so use mode A for them.
+
   Needs Docker Desktop running and a .env file (copy .env.example).
 
 .EXAMPLE
   ./benchmarks/run-baseline.ps1                       # HEAD, 3 runs
   ./benchmarks/run-baseline.ps1 -WorkingTree -Runs 1  # try uncommitted changes
+  ./benchmarks/run-baseline.ps1 -Mode B -Name bench   # Redis warm on HEAD
 #>
 param(
     [string]$Commit = "HEAD",
+    [ValidateSet("A", "B", "D", "E")]
+    [string]$Mode = "A",
     [int]$Runs = 3,
     [int]$Vus = 20,
     [string]$Duration = "60s",
@@ -76,6 +86,15 @@ if ($dirty) { $label = "$sha7-dirty" }
 $image = "urlshortener-api:bench-$label"
 $env:BENCH_API_IMAGE = $image
 $env:API_PORT = "$ApiPort"
+
+$modeConfig = @{
+    A = @{ Cache = "None";  Analytics = "false"; Description = "no cache, analytics off" }
+    B = @{ Cache = "Redis"; Analytics = "false"; Description = "Redis cache-aside warm, analytics off" }
+    D = @{ Cache = "Redis"; Analytics = "false"; Description = "Redis stopped before warm-up, every request falls back to SQL" }
+    E = @{ Cache = "Redis"; Analytics = "true";  Description = "Redis cache-aside warm, synchronous click analytics on" }
+}[$Mode]
+$env:BENCH_CACHE_PROVIDER = $modeConfig.Cache
+$env:BENCH_ANALYTICS = $modeConfig.Analytics
 $compose = @("compose", "-f", "docker-compose.yml", "-f", "benchmarks/docker-compose.bench.yml")
 
 Write-Host "== Building $image"
@@ -106,8 +125,18 @@ Invoke-Native "migrate" { docker @compose @sqlcmd -d UrlShortener -i /tmp/migrat
 Invoke-Native "seed" { docker @compose @sqlcmd -d UrlShortener -i /tmp/seed.sql }
 $sqlVersion = (docker @compose @sqlcmd -h -1 -W -Q "SET NOCOUNT ON; SELECT CAST(SERVERPROPERTY('ProductVersion') AS varchar(20)) + ' ' + CAST(SERVERPROPERTY('Edition') AS varchar(60))" | Select-Object -First 1).Trim()
 
-Write-Host "== Starting API (force-recreate so it runs the image just built)"
-Invoke-Native "compose up api" { docker @compose up -d --wait --force-recreate --no-build api }
+# Every mode starts from the same state: no clicks recorded, empty cache (warm-up then fills it).
+Invoke-Native "reset clicks" { docker @compose @sqlcmd -d UrlShortener -Q "IF OBJECT_ID('click_events') IS NOT NULL TRUNCATE TABLE click_events" }
+
+Write-Host "== Starting Redis + API in mode $Mode ($($modeConfig.Description))"
+Invoke-Native "compose up api" { docker @compose up -d --wait --force-recreate --no-build redis api }
+Invoke-Native "flush redis" { docker @compose exec -T redis redis-cli FLUSHALL | Out-Null }
+$redisVersion = (docker @compose exec -T redis redis-server --version | Select-Object -First 1).Trim()
+
+if ($Mode -eq "D") {
+    Write-Host "== Stopping Redis (mode D)"
+    Invoke-Native "stop redis" { docker @compose stop redis }
+}
 
 $base = "http://localhost:$ApiPort"
 $raw = "benchmarks/results/raw"
@@ -116,15 +145,24 @@ New-Item -ItemType Directory -Force $raw | Out-Null
 $runResults = @()
 for ($i = 1; $i -le $Runs; $i++) {
     Write-Host "== Run ${i}/${Runs}: warm-up $WarmUp"
-    Invoke-Native "k6 warm-up" { docker @compose --profile bench run --rm k6 run --quiet -e VUS=$Vus -e DURATION=$WarmUp redirect.js | Out-Null }
+    Invoke-Native "k6 warm-up" { docker @compose --profile bench run --rm --no-deps k6 run --quiet -e VUS=$Vus -e DURATION=$WarmUp redirect.js | Out-Null }
 
     Invoke-RestMethod -Method Post "$base/_diag/db-queries/reset" | Out-Null
+    # Older images have no cache counters; then the hit ratio is simply not reported.
+    $hasCacheStats = $true
+    try { Invoke-RestMethod -Method Post "$base/_diag/cache/reset" | Out-Null } catch { $hasCacheStats = $false }
 
     Write-Host "== Run ${i}/${Runs}: measuring $Duration with $Vus VUs"
-    $summary = "results/raw/$Name-$label-run$i.json"
-    Invoke-Native "k6 run" { docker @compose --profile bench run --rm k6 run --quiet -e VUS=$Vus -e DURATION=$Duration --summary-export $summary redirect.js }
+    $summary = "results/raw/$Name-$Mode-$label-run$i.json"
+    Invoke-Native "k6 run" { docker @compose --profile bench run --rm --no-deps k6 run --quiet -e VUS=$Vus -e DURATION=$Duration --summary-export $summary redirect.js }
 
     $queries = (Invoke-RestMethod "$base/_diag/db-queries").count
+    $hitRatio = $null
+    if ($hasCacheStats -and $Mode -ne "A") {
+        $cacheStats = Invoke-RestMethod "$base/_diag/cache"
+        $lookups = [double]$cacheStats.hits + [double]$cacheStats.misses
+        if ($lookups -gt 0) { $hitRatio = [math]::Round([double]$cacheStats.hits / $lookups, 4) }
+    }
     $k6 = Get-Content "benchmarks/$summary" -Raw | ConvertFrom-Json
     $d = $k6.metrics.http_req_duration
     $requests = [double]$k6.metrics.http_reqs.count
@@ -141,6 +179,7 @@ for ($i = 1; $i -le $Runs; $i++) {
         errorPercent     = [math]::Round([double]$k6.metrics.http_req_failed.value * 100, 3)
         dbQueries        = $queries
         dbQueriesPerReq  = [math]::Round($queries / $requests, 3)
+        hitRatio         = $hitRatio
     }
     $runResults[-1] | Format-List | Out-String | Write-Host
 }
@@ -148,6 +187,10 @@ for ($i = 1; $i -le $Runs; $i++) {
 $median = [ordered]@{}
 foreach ($metric in "rps", "p50Ms", "p95Ms", "p99Ms", "errorPercent", "dbQueriesPerReq") {
     $median[$metric] = Get-Median ($runResults | ForEach-Object { [double]$_.$metric })
+}
+$median["hitRatio"] = $null
+if ($null -ne $runResults[0].hitRatio) {
+    $median["hitRatio"] = Get-Median ($runResults | ForEach-Object { [double]$_.hitRatio })
 }
 $spread = [ordered]@{
     rps   = Get-SpreadPercent ($runResults | ForEach-Object { [double]$_.rps })
@@ -162,6 +205,8 @@ $k6Version = (docker run --rm grafana/k6:0.54.0 version | Select-Object -First 1
 
 $result = [ordered]@{
     name        = $Name
+    mode        = $Mode
+    modeDescription = $modeConfig.Description
     commit      = $sha
     dirty       = $dirty
     apiCodeFromCommit = -not $dirty
@@ -174,7 +219,7 @@ $result = [ordered]@{
         docker         = "Docker $($dockerInfo.ServerVersion), VM $($dockerInfo.NCPU) CPU / $([math]::Round($dockerInfo.MemTotal / 1GB, 1)) GB"
         limits         = "api 2 CPU / 1 GB, sqlserver 2 CPU / 2 GB (benchmarks/docker-compose.bench.yml)"
         sqlServer      = $sqlVersion
-        redis          = "none (SQL-only baseline)"
+        redis          = "$redisVersion (cache provider for this mode: $($modeConfig.Cache))"
         k6             = $k6Version
         otherContainers = $others
         loadGenerator  ="k6 in a container on the same machine and Docker network as the API; it competes for CPU (limitation)"
@@ -191,17 +236,18 @@ $result = [ordered]@{
         duration  = $Duration
         warmUp    = "$WarmUp per run, excluded from numbers and from the DB query count"
         runs      = $Runs
-        cacheTtl  = "n/a (no cache)"
-        analytics = "off (not implemented yet)"
+        cacheTtl  = "Cache:LinkTtl default 1h, capped by link expiry (seed links never expire)"
+        analytics = "Analytics:Enabled=$($modeConfig.Analytics) (older images: not implemented)"
     }
     runs        = $runResults
     median      = $median
     spreadPercentBetweenRuns = $spread
 }
 
-$out = "benchmarks/results/$Name-$label.json"
+$out = "benchmarks/results/$Name-$Mode-$label.json"
 $result | ConvertTo-Json -Depth 6 | Set-Content -Encoding utf8 $out
 Write-Host "== Wrote $out"
 $median | Format-List | Out-String | Write-Host
 
+if ($Mode -eq "D") { docker @compose start redis | Out-Null }
 if ($Down) { docker @compose down | Out-Null }

@@ -76,6 +76,39 @@ BEGIN
     VALUES (N'20261119054741_InitialCreate', N'9.0.20');
 END;
 
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20261124034848_AddClickEvents'
+)
+BEGIN
+    CREATE TABLE [click_events] (
+        [id] bigint NOT NULL IDENTITY,
+        [link_id] bigint NOT NULL,
+        [clicked_at] datetime2 NOT NULL,
+        [referrer_host] varchar(255) NULL,
+        [ua_family] varchar(50) NULL,
+        CONSTRAINT [PK_click_events] PRIMARY KEY ([id]),
+        CONSTRAINT [FK_click_events_short_links_link_id] FOREIGN KEY ([link_id]) REFERENCES [short_links] ([id]) ON DELETE NO ACTION
+    );
+END;
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20261124034848_AddClickEvents'
+)
+BEGIN
+    CREATE INDEX [IX_click_events_link_id_clicked_at] ON [click_events] ([link_id], [clicked_at]);
+END;
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20261124034848_AddClickEvents'
+)
+BEGIN
+    INSERT INTO [__EFMigrationsHistory] ([MigrationId], [ProductVersion])
+    VALUES (N'20261124034848_AddClickEvents', N'9.0.20');
+END;
+
 COMMIT;
 GO
 

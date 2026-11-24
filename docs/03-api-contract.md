@@ -1,6 +1,6 @@
 # 03. API Contract
 
-Nguồn: mục 10 của requirement. Đây là hợp đồng cho v0.1 trở đi; endpoint stats thuộc v1.0.
+Nguồn: mục 10 của requirement. Đây là hợp đồng cho v0.1 trở đi; endpoint stats có từ Ngày 22 (US-11).
 
 ## Quy ước chung
 
@@ -44,11 +44,14 @@ POST /api/links/{code}/disable
 - 204. Gọi lại lần nữa vẫn 204 (idempotent). Từ v0.2: xoá cache sau commit.
 - 404.
 
-GET /api/links/{code}/stats?from=&to= (v1.0)
+GET /api/links/{code}/stats?from=&to=
 
 - Auth: API key.
-- 200, body { total, byDay: [{ day, clicks }] }. Ngày tính theo UTC.
-- 400 khi from > to hoặc khoảng quá dài; 404.
+- from, to là ngày dạng yyyy-MM-dd, tính theo lịch UTC, bao gồm cả hai đầu. Bỏ trống thì mặc định là 30 ngày gần nhất, kết thúc hôm nay (UTC).
+- 200, body { total, from, to, timeZone: "UTC", byDay: [{ day, clicks }] }. Ngày nào không có click vẫn có mặt với clicks = 0.
+- 400 khi from > to, khoảng dài quá 366 ngày, hoặc ngày sai định dạng; 404 khi link không có hoặc thuộc client khác.
+- Một click là một lần redirect trả 302. Lần trả 404 hay 410 không được tính.
+- Không lưu IP. Chỉ lưu host của Referer và họ trình duyệt (Chrome, Edge, Firefox, Safari, curl, k6, Other).
 
 GET /{code}
 

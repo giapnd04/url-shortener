@@ -75,7 +75,11 @@ Vì sao varchar mà không nvarchar cho code: code chỉ gồm ký tự Base62 A
 - referrer_host varchar(255) null. Chỉ giữ host, không giữ full URL.
 - ua_family varchar(50) null. Chỉ giữ họ trình duyệt.
 
-Index: IX_click_events_link_id_clicked_at trên (link_id, clicked_at) cho truy vấn thống kê theo khoảng ngày.
+Index: IX_click_events_link_id_clicked_at trên (link_id, clicked_at) cho truy vấn thống kê theo khoảng ngày. Cột so sánh bằng (link_id) đứng trước, cột so sánh khoảng (clicked_at) đứng sau, nên WHERE link_id = @id AND clicked_at >= @from AND clicked_at < @to là một lần range seek. Nếu đảo thứ tự cột, SQL Server phải đọc mọi click của mọi link trong khoảng ngày đó rồi mới lọc theo link. Index này còn phủ được truy vấn GROUP BY CAST(clicked_at AS date), nên không cần key lookup. Có integration test đọc execution plan để kiểm tra đây là Index Seek trên đúng index này.
+
+Khoảng ngày dùng nửa mở: clicked_at >= from 00:00 và < (to + 1 ngày) 00:00. Cách này lấy trọn ngày "to" mà không phải viết 23:59:59.999, và không bọc hàm quanh clicked_at trong WHERE, nên index vẫn dùng được (sargable).
+
+Ghi click hiện chạy đồng bộ trong request redirect: mỗi lần trả 302 tốn thêm một INSERT. Chi phí này được đo ở chế độ E của benchmark. Bản bất đồng bộ (Channel + worker ghi theo lô, US-13) sẽ bỏ được chi phí đó khỏi redirect, đổi lại có thể mất event khi app crash.
 
 Không lưu IP thô (SEC-04). Nếu cần đếm unique visitor thì hash IP có salt, để sau.
 
@@ -85,8 +89,8 @@ Không lưu IP thô (SEC-04). Nếu cần đếm unique visitor thì hash IP có
 
 ## Thiết kế dữ liệu trong Redis (từ v0.2, ghi trước để thống nhất)
 
-- link:v1:{code} chứa JSON gọn {t: target, s: status, e: expiresAt, u: updatedAt}. TTL cố định nhưng không vượt thời gian còn lại của link.
-- v1 trong key để khi đổi định dạng value thì đổi sang v2, key cũ tự hết hạn, không phải xoá hàng loạt.
+- link:v2:{code} chứa JSON gọn {i: linkId, t: target, s: status, e: expiresAt, u: updatedAt}. TTL tối đa 1 giờ và không vượt thời gian còn lại của link.
+- Số version trong key để khi đổi định dạng value thì chỉ cần đổi version, key cũ tự hết hạn, không phải xoá hàng loạt. Việc này đã xảy ra thật ở Ngày 22: click analytics cần link id, nên value có thêm i, và key chuyển từ v1 sang v2.
 - rl:create:{clientId}:{window} (P1) là bộ đếm rate limit.
 
 ## Câu hỏi tự kiểm tra

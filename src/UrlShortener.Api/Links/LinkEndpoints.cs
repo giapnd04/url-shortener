@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Http.HttpResults;
 using UrlShortener.Api.Auth;
+using UrlShortener.Infrastructure.Analytics;
 using UrlShortener.Infrastructure.Links;
 
 namespace UrlShortener.Api.Links;
@@ -25,6 +26,7 @@ public static class LinkEndpoints
         links.MapGet("/{code}", GetAsync);
         links.MapPatch("/{code}", UpdateAsync);
         links.MapPost("/{code}/disable", DisableAsync);
+        links.MapGet("/{code}/stats", StatsAsync);
 
         app.MapGet(RedirectRoute, RedirectAsync);
 
@@ -111,7 +113,7 @@ public static class LinkEndpoints
 
     /// <summary>302, not 301: browsers cache 301 forever, so later edits/disables and click counting would be lost (ADR-002).</summary>
     private static async Task<IResult> RedirectAsync(
-        string code, IRedirectReader reader, TimeProvider time, CancellationToken ct)
+        string code, HttpRequest http, IRedirectReader reader, ClickRecorder clicks, TimeProvider time, CancellationToken ct)
     {
         // Cache-aside or plain SQL, depending on Cache:Provider; the endpoint does not care which.
         var target = await reader.GetAsync(code, ct);
@@ -121,9 +123,37 @@ public static class LinkEndpoints
         }
 
         var status = LinkStatus.Of(target.DisabledAt, target.ExpiresAt, time.GetUtcNow().UtcDateTime);
-        return status == LinkStatus.Active
-            ? TypedResults.Redirect(target.TargetUrl, permanent: false)
-            : TypedResults.StatusCode(StatusCodes.Status410Gone);
+        if (status != LinkStatus.Active)
+        {
+            return TypedResults.StatusCode(StatusCodes.Status410Gone);
+        }
+
+        // US-11 synchronous: only real redirects count as clicks (no 404/410). Costs one INSERT per 302.
+        await clicks.RecordAsync(target.LinkId, http.Headers.Referer, http.Headers.UserAgent, ct);
+        return TypedResults.Redirect(target.TargetUrl, permanent: false);
+    }
+
+    private static async Task<Results<Ok<ClickStatsResponse>, NotFound, ValidationProblem>> StatsAsync(
+        string code, ClaimsPrincipal user, LinkService links, ClickStatsService stats, TimeProvider time,
+        CancellationToken ct, DateOnly? from = null, DateOnly? to = null)
+    {
+        var today = DateOnly.FromDateTime(time.GetUtcNow().UtcDateTime);
+        var range = ClickStatsService.ResolveRange(from, to, today);
+        if (range.Error is not null)
+        {
+            return TypedResults.ValidationProblem(new Dictionary<string, string[]> { ["range"] = [range.Error] });
+        }
+
+        var linkId = await links.GetOwnedIdAsync(user.GetClientId(), code, ct);
+        if (linkId is null)
+        {
+            return TypedResults.NotFound();
+        }
+
+        var result = await stats.GetAsync(linkId.Value, range.From, range.To, ct);
+        return TypedResults.Ok(new ClickStatsResponse(
+            result.Total, result.From, result.To, "UTC",
+            result.ByDay.Select(d => new DayClicksResponse(d.Day, d.Clicks)).ToList()));
     }
 
     private static string? ValidateExpiry(DateTimeOffset? expiresAt, DateTimeOffset now) =>

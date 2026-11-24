@@ -28,6 +28,11 @@ public sealed record LinkResponse(
         v.DisabledAt);
 }
 
+public sealed record DayClicksResponse(DateOnly Day, int Clicks);
+
+/// <summary>Days are UTC calendar days ("timeZone": "UTC" makes that explicit to clients).</summary>
+public sealed record ClickStatsResponse(int Total, DateOnly From, DateOnly To, string TimeZone, IReadOnlyList<DayClicksResponse> ByDay);
+
 public sealed record LinkListResponse(IReadOnlyList<LinkResponse> Items, int Page, int PageSize, int TotalCount);
 
 public static class LinkStatus

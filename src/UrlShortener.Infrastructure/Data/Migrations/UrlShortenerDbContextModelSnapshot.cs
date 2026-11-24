@@ -59,6 +59,43 @@ namespace UrlShortener.Infrastructure.Data.Migrations
                     b.ToTable("api_clients", (string)null);
                 });
 
+            modelBuilder.Entity("UrlShortener.Infrastructure.Data.ClickEvent", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("id");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTime>("ClickedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("clicked_at");
+
+                    b.Property<long>("LinkId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("link_id");
+
+                    b.Property<string>("ReferrerHost")
+                        .HasMaxLength(255)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(255)")
+                        .HasColumnName("referrer_host");
+
+                    b.Property<string>("UaFamily")
+                        .HasMaxLength(50)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(50)")
+                        .HasColumnName("ua_family");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("LinkId", "ClickedAt")
+                        .HasDatabaseName("IX_click_events_link_id_clicked_at");
+
+                    b.ToTable("click_events", (string)null);
+                });
+
             modelBuilder.Entity("UrlShortener.Infrastructure.Data.ShortLink", b =>
                 {
                     b.Property<long>("Id")
@@ -112,6 +149,15 @@ namespace UrlShortener.Infrastructure.Data.Migrations
                         .HasDatabaseName("IX_short_links_client_id_created_at");
 
                     b.ToTable("short_links", (string)null);
+                });
+
+            modelBuilder.Entity("UrlShortener.Infrastructure.Data.ClickEvent", b =>
+                {
+                    b.HasOne("UrlShortener.Infrastructure.Data.ShortLink", null)
+                        .WithMany()
+                        .HasForeignKey("LinkId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("UrlShortener.Infrastructure.Data.ShortLink", b =>

@@ -16,7 +16,7 @@ public sealed record LinkView(
     DateTime? DisabledAt);
 
 /// <summary>Only the columns redirect needs (projection keeps the read narrow). Also the cached value.</summary>
-public sealed record RedirectTarget(string TargetUrl, DateTime? ExpiresAt, DateTime? DisabledAt, DateTime UpdatedAt);
+public sealed record RedirectTarget(long LinkId, string TargetUrl, DateTime? ExpiresAt, DateTime? DisabledAt, DateTime UpdatedAt);
 
 public sealed record PagedLinks(IReadOnlyList<LinkView> Items, int Page, int PageSize, int TotalCount);
 
@@ -157,6 +157,14 @@ public sealed class LinkService(
             logger.LogWarning(ex, "Cache invalidation failed for a link; stale entry lives until its TTL");
         }
     }
+
+    /// <summary>Id of a link owned by this client, or null (another client's link looks missing).</summary>
+    public Task<long?> GetOwnedIdAsync(int clientId, string code, CancellationToken ct) =>
+        db.ShortLinks
+            .AsNoTracking()
+            .Where(l => l.Code == code && l.ClientId == clientId)
+            .Select(l => (long?)l.Id)
+            .FirstOrDefaultAsync(ct);
 
     private Task<ShortLink?> FindOwnedAsync(int clientId, string code, CancellationToken ct) =>
         db.ShortLinks.FirstOrDefaultAsync(l => l.Code == code && l.ClientId == clientId, ct);

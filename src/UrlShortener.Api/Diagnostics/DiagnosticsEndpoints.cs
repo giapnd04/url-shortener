@@ -1,3 +1,4 @@
+using UrlShortener.Infrastructure.Caching;
 using UrlShortener.Infrastructure.Diagnostics;
 
 namespace UrlShortener.Api.Diagnostics;
@@ -23,6 +24,16 @@ public static class DiagnosticsEndpoints
         app.MapPost("/_diag/db-queries/reset", (QueryCounter counter) =>
         {
             counter.Reset();
+            return TypedResults.NoContent();
+        });
+
+        // Hit ratio for the benchmark report (US-10). Separate endpoints so the harness still works
+        // against older images that only have /_diag/db-queries (the SQL baseline commit).
+        app.MapGet("/_diag/cache", (CacheStats stats) =>
+            TypedResults.Ok(new { hits = stats.Hits, misses = stats.Misses }));
+        app.MapPost("/_diag/cache/reset", (CacheStats stats) =>
+        {
+            stats.Reset();
             return TypedResults.NoContent();
         });
 

@@ -19,8 +19,10 @@ services:
     mem_limit: 1g
     environment:
       Diagnostics__ExposeQueryCounter: "true"
-      # Mode A (no cache) by default; set BENCH_CACHE_PROVIDER=Redis for mode B. Ignored by pre-cache images.
+      # Set by run-baseline.ps1 -Mode (A: None/off, B and D: Redis/off, E: Redis/on).
+      # Older images (the SQL baseline commit) simply ignore these settings.
       Cache__Provider: ${BENCH_CACHE_PROVIDER:-None}
+      Analytics__Enabled: ${BENCH_ANALYTICS:-false}
       # Keep per-request logging out of the measurement.
       Logging__LogLevel__Default: Warning
       Logging__LogLevel__Microsoft.EntityFrameworkCore: Warning
@@ -28,9 +30,8 @@ services:
   k6:
     image: grafana/k6:0.54.0
     profiles: [bench]
-    depends_on:
-      api:
-        condition: service_started
+    # No depends_on: `compose run` would otherwise start api's dependencies again, which silently
+    # restarted Redis in mode D. The runner starts everything itself and calls `run --no-deps`.
     volumes:
       # Relative paths resolve from the project directory (repo root), not from this file.
       - ./benchmarks:/bench

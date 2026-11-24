@@ -18,7 +18,7 @@ public sealed class SqlRedirectReader(UrlShortenerDbContext db) : IRedirectReade
         db.ShortLinks
             .AsNoTracking()
             .Where(l => l.Code == code)
-            .Select(l => new RedirectTarget(l.TargetUrl, l.ExpiresAt, l.DisabledAt, l.UpdatedAt))
+            .Select(l => new RedirectTarget(l.Id, l.TargetUrl, l.ExpiresAt, l.DisabledAt, l.UpdatedAt))
             .FirstOrDefaultAsync(ct);
 }
 
@@ -33,16 +33,21 @@ public sealed class CachedRedirectReader(
     IRedirectReader inner,
     ILinkCache cache,
     TimeProvider time,
-    IOptions<CacheOptions> options) : IRedirectReader
+    IOptions<CacheOptions> options,
+    CacheStats stats) : IRedirectReader
 {
     public async Task<RedirectTarget?> GetAsync(string code, CancellationToken ct)
     {
         var cached = await cache.GetAsync(code, ct);
         if (cached is not null)
         {
+            stats.Hit();
             return cached;
         }
 
+        // Counted as a miss also when Redis is down or the code does not exist: hit ratio is
+        // "share of redirects answered without SQL", which is what the benchmark compares.
+        stats.Miss();
         var target = await inner.GetAsync(code, ct);
         if (target is null)
         {
