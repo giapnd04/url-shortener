@@ -1,0 +1,99 @@
+﻿{
+    "name":  "bench",
+    "mode":  "E",
+    "modeDescription":  "Redis cache-aside warm, synchronous click analytics on",
+    "commit":  "ee9fd906eb064f8160e8d8f6245290cb606b0f18",
+    "dirty":  false,
+    "apiCodeFromCommit":  true,
+    "harnessChanges":  [
+                           "M benchmarks/run-baseline.ps1"
+                       ],
+    "measuredAt":  "2026-11-24T04:28:59Z",
+    "environment":  {
+                        "cpu":  "AMD Ryzen 5 5600H with Radeon Graphics (6 cores / 12 threads)",
+                        "ramGb":  13.9,
+                        "os":  "Microsoft Windows 11 Pro 10.0.26200",
+                        "docker":  "Docker 29.9.3, VM 12 CPU / 6.7 GB",
+                        "limits":  "api 2 CPU / 1 GB, sqlserver 2 CPU / 2 GB (benchmarks/docker-compose.bench.yml)",
+                        "sqlServer":  "16.0.4325.4 Developer Edition (64-bit)",
+                        "redis":  "Redis server v=7.4.12 sha=00000000:0 malloc=jemalloc-5.3.0 bits=64 build=97c9b7ac751c8f00 (cache provider for this mode: Redis)",
+                        "k6":  "k6 v0.54.0 (commit/baba871c8a, go1.23.1, linux/amd64)",
+                        "otherContainers":  [
+
+                                            ],
+                        "loadGenerator":  "k6 in a container on the same machine and Docker network as the API; it competes for CPU (limitation)"
+                    },
+    "dataset":  {
+                    "links":  100000,
+                    "seed":  "deterministic: code(n) = Base62(n * 1000000007 mod 62^7), benchmarks/sql/seed.sql",
+                    "indexes":  "UX_short_links_code (unique, BIN2), IX_short_links_client_id_created_at"
+                },
+    "workload":  {
+                     "endpoint":  "GET /{code}, redirects not followed",
+                     "mix":  "80% hot (20% of links), 15% cold, 5% non-existent (404)",
+                     "vus":  20,
+                     "duration":  "60s",
+                     "warmUp":  "20s per run, excluded from numbers and from the DB query count",
+                     "runs":  3,
+                     "cacheTtl":  "Cache:LinkTtl default 1h, capped by link expiry (seed links never expire)",
+                     "analytics":  "Analytics:Enabled=true (older images: not implemented)"
+                 },
+    "runs":  [
+                 {
+                     "run":  1,
+                     "requests":  58439,
+                     "rps":  973.6,
+                     "p50Ms":  19.6,
+                     "p95Ms":  34.32,
+                     "p99Ms":  48.91,
+                     "avgMs":  20.29,
+                     "maxMs":  114.97,
+                     "errorPercent":  0,
+                     "dbQueries":  80357,
+                     "dbQueriesPerReq":  1.375,
+                     "hitRatio":  0.5765
+                 },
+                 {
+                     "run":  2,
+                     "requests":  63177,
+                     "rps":  1052.7,
+                     "p50Ms":  18.93,
+                     "p95Ms":  29.67,
+                     "p99Ms":  39.96,
+                     "avgMs":  18.75,
+                     "maxMs":  83.3,
+                     "errorPercent":  0,
+                     "dbQueries":  71406,
+                     "dbQueriesPerReq":  1.13,
+                     "hitRatio":  0.8192
+                 },
+                 {
+                     "run":  3,
+                     "requests":  52037,
+                     "rps":  866.8,
+                     "p50Ms":  21.61,
+                     "p95Ms":  38.26,
+                     "p99Ms":  56.02,
+                     "avgMs":  22.78,
+                     "maxMs":  175.33,
+                     "errorPercent":  0,
+                     "dbQueries":  57416,
+                     "dbQueriesPerReq":  1.103,
+                     "hitRatio":  0.847
+                 }
+             ],
+    "median":  {
+                   "rps":  973.6,
+                   "p50Ms":  19.6,
+                   "p95Ms":  34.32,
+                   "p99Ms":  48.91,
+                   "errorPercent":  0,
+                   "dbQueriesPerReq":  1.13,
+                   "hitRatio":  0.8192
+               },
+    "spreadPercentBetweenRuns":  {
+                                     "rps":  19.1,
+                                     "p50Ms":  13.7,
+                                     "p95Ms":  25
+                                 }
+}

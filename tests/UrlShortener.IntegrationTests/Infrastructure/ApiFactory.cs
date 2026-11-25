@@ -71,9 +71,15 @@ public class ApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
     }
 
     /// <summary>Same app with click analytics on (a separate host sharing the same containers).</summary>
-    public WebApplicationFactory<Program> WithAnalytics() =>
+    public WebApplicationFactory<Program> WithAnalytics(string mode = "Sync") =>
         WithWebHostBuilder(b => b.ConfigureAppConfiguration(c =>
-            c.AddInMemoryCollection(new Dictionary<string, string?> { ["Analytics:Enabled"] = "true" })));
+            c.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Analytics:Enabled"] = "true",
+                ["Analytics:Mode"] = mode,
+                // Short flush so async tests do not wait a full second per batch.
+                ["Analytics:FlushInterval"] = "00:00:00.100",
+            })));
 
     public string SqlConnectionString => _sql.GetConnectionString();
 

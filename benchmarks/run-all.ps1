@@ -4,7 +4,7 @@
 
 .DESCRIPTION
   - SQL baseline: mode A on the commit tagged/planned as v0.1-sql-baseline (no cache code at all).
-  - Modes A, B, D, E on -Commit (the code that has cache + analytics).
+  - Modes A, B, D, E, F on -Commit (the code that has cache + analytics; F needs async analytics, ee9fd90 does not have it).
   Each call writes benchmarks/results/<name>-<mode>-<sha7>.json; benchmarks/REPORT.md is filled from those.
   Takes about 25-30 minutes. Stop every other container first (the runner refuses otherwise).
 
@@ -26,7 +26,7 @@ if (-not $SkipBaseline) {
     & $runner -Commit $BaselineCommit -Mode A -Name baseline -Runs $Runs
 }
 
-foreach ($mode in "A", "B", "D", "E") {
+foreach ($mode in "A", "B", "D", "E", "F") {
     & $runner -Commit $Commit -Mode $mode -Name bench -Runs $Runs
 }
 

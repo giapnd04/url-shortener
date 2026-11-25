@@ -4,7 +4,12 @@ URL shortener viết bằng ASP.NET Core 9 (Minimal API), EF Core 9, SQL Server 
 
 Giá trị của project không nằm ở tính năng rút gọn link mà ở quá trình đo có kiểm soát: dựng bản chỉ dùng SQL, đo baseline, thêm Redis cache-aside, xử lý khi Redis lỗi, rồi đo lại trong cùng điều kiện. Mọi con số hiệu năng trong repo phải có file kết quả gốc và commit đi kèm.
 
-Trạng thái hiện tại (Ngày 22): tạo link, redirect 302/404/410, quản lý link bằng API key; Redis cache-aside cho redirect, xoá cache sau khi sửa/disable, Redis lỗi thì đọc thẳng SQL; click analytics đồng bộ và endpoint thống kê theo ngày (UTC). Bộ đo k6 chạy được 4 chế độ A/B/D/E, nhưng chưa có số đo thật nào. benchmarks/REPORT.md mới là khung, chưa có số.
+Trạng thái hiện tại (Ngày 24, ứng viên v1.0):
+- Tạo link, redirect 302/404/410, quản lý link bằng API key.
+- Redis cache-aside cho redirect, xoá key sau khi commit, Redis lỗi thì đọc thẳng SQL.
+- Click analytics: mặc định bất đồng bộ (Channel cùng worker ghi theo lô), có endpoint thống kê theo ngày UTC.
+- Log JSON có CorrelationId và CacheResult.
+- Baseline và các chế độ A/B/D/E đã đo thật (benchmarks/REPORT.md). Chế độ F (analytics bất đồng bộ) đã có trong bộ đo nhưng chưa đo.
 
 ## Cache
 
@@ -70,14 +75,25 @@ dotnet tool restore
 dotnet ef migrations add <Ten> --project src/UrlShortener.Infrastructure --startup-project src/UrlShortener.Api --output-dir Data/Migrations
 ```
 
-Cách 2, dùng Docker Compose:
+Cách 2, dùng Docker Compose. Máy sạch chỉ cần Docker. API tự chạy migration khi khởi động (Database:MigrateOnStartup), và tạo một API client từ BOOTSTRAP_API_KEY trong .env:
 
 ```powershell
 Copy-Item .env.example .env
-docker compose up --build
+docker compose up --build --wait
 ```
 
-Rồi mở http://localhost:8080/health/ready.
+Rồi thử, đổi key theo giá trị trong .env. Nếu cổng 8080 trên máy đã bị chiếm, đặt API_PORT trong .env:
+
+```powershell
+curl.exe -s -H "X-Api-Key: change-me-local-bootstrap-key" -H "Content-Type: application/json" -d '{\"url\":\"https://example.com\"}' http://localhost:8080/api/links
+```
+
+## Logging
+
+- Ngoài Development, log ghi ra console dạng JSON, có scope.
+- Mỗi request có CorrelationId. App lấy từ header X-Correlation-Id nếu giá trị an toàn, không thì tự tạo mới, rồi trả lại trong response. ProblemDetails.traceId cũng là giá trị này.
+- Mỗi request có một dòng log khi kết thúc, gồm method, route template, status, thời gian (ms) và CacheResult (hit, miss, error, none). Health check chỉ log ở mức Debug.
+- Lỗi không lường trước (GlobalExceptionHandler): log Error kèm exception, client chỉ nhận 500 ProblemDetails với traceId, không có chi tiết exception. Client tự ngắt kết nối thì chỉ log Information.
 
 Chạy test. Integration test dùng Testcontainers dựng SQL Server 2022 và Redis 7.4 thật, nên cần Docker Desktop đang chạy:
 
@@ -92,8 +108,14 @@ dotnet test UrlShortener.sln
 - docs/03-api-contract.md
 - docs/adr/ADR-001-short-code-strategy.md
 - docs/adr/ADR-002-redirect-status-code.md
+- docs/adr/ADR-003-caching-pattern.md
+- docs/adr/ADR-004-cache-invalidation.md
+- docs/adr/ADR-005-redis-failure.md
+- docs/adr/ADR-006-analytics.md
 - docs/adr/ADR-007-architecture-minimal-api.md
 - docs/design-patterns.md
+- docs/bugs.md
+- benchmarks/REPORT.md
 
 ## Đo hiệu năng
 
@@ -115,8 +137,9 @@ Các chế độ:
 - A: không cache.
 - B: Redis đã warm.
 - D: Redis bị tắt từ trước khi warm-up, nên mọi request đều đi SQL.
-- E: Redis warm và bật analytics.
+- E: Redis warm và bật analytics đồng bộ.
+- F: Redis warm và bật analytics bất đồng bộ (chưa đo).
 
 Script build API từ git archive của commit cần đo, nạp 100k link cố định, chạy k6 3 lần cho mỗi chế độ rồi ghi benchmarks/results/<name>-<mode>-<commit>.json. Báo cáo nằm ở benchmarks/REPORT.md.
 
-ADR-003 (caching pattern), ADR-004 (invalidation), ADR-005 (Redis lỗi), ADR-006 (analytics) sẽ viết khi tới phần tương ứng.
+Chế độ F (Redis đã warm, analytics bất đồng bộ) chạy bằng ./benchmarks/run-baseline.ps1 -Commit <commit> -Mode F -Name bench, nhưng chưa có số đo.

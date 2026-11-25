@@ -1,3 +1,4 @@
+using UrlShortener.Infrastructure.Analytics;
 using UrlShortener.Infrastructure.Caching;
 using UrlShortener.Infrastructure.Diagnostics;
 
@@ -30,12 +31,22 @@ public static class DiagnosticsEndpoints
         // Hit ratio for the benchmark report (US-10). Separate endpoints so the harness still works
         // against older images that only have /_diag/db-queries (the SQL baseline commit).
         app.MapGet("/_diag/cache", (CacheStats stats) =>
-            TypedResults.Ok(new { hits = stats.Hits, misses = stats.Misses }));
+            TypedResults.Ok(new { hits = stats.Hits, misses = stats.Misses, errors = stats.Errors }));
         app.MapPost("/_diag/cache/reset", (CacheStats stats) =>
         {
             stats.Reset();
             return TypedResults.NoContent();
         });
+
+        // Async analytics (US-13): how many clicks were queued, dropped because the queue was full,
+        // written by the worker, or lost because a batch insert failed.
+        app.MapGet("/_diag/analytics", (ClickQueue queue, ClickWriterService writer) => TypedResults.Ok(new
+        {
+            enqueued = queue.Enqueued,
+            dropped = queue.Dropped,
+            written = writer.Written,
+            failed = writer.Failed,
+        }));
 
         return app;
     }

@@ -23,17 +23,18 @@ public sealed class RedisLinkCache(
 
     public static string Key(string code) => $"link:v2:{code}";
 
-    public async Task<RedirectTarget?> GetAsync(string code, CancellationToken ct)
+    public async Task<CacheLookup> GetAsync(string code, CancellationToken ct)
     {
         try
         {
             var value = await redis.GetDatabase().StringGetAsync(Key(code));
-            return value.IsNullOrEmpty ? null : JsonSerializer.Deserialize<CachedLink>(value.ToString())?.ToTarget();
+            var target = value.IsNullOrEmpty ? null : JsonSerializer.Deserialize<CachedLink>(value.ToString())?.ToTarget();
+            return target is null ? CacheLookup.Miss : CacheLookup.Hit(target);
         }
         catch (Exception ex) when (IsRedisFailure(ex))
         {
             LogFailure(ex, "GET");
-            return null;
+            return CacheLookup.Error;
         }
     }
 

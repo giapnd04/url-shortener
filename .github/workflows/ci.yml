@@ -27,7 +27,7 @@ jobs:
       - name: Unit tests
         run: dotnet test tests/UrlShortener.UnitTests -c Release --no-build
 
-      # From Day 16 these use Testcontainers (SQL Server, later Redis) via the runner's Docker daemon.
+      # Testcontainers starts real SQL Server 2022 and Redis 7.4 containers on the runner's Docker daemon.
       - name: Integration tests
         run: dotnet test tests/UrlShortener.IntegrationTests -c Release --no-build
 

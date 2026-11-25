@@ -1,0 +1,99 @@
+﻿{
+    "name":  "bench",
+    "mode":  "A",
+    "modeDescription":  "no cache, analytics off",
+    "commit":  "ee9fd906eb064f8160e8d8f6245290cb606b0f18",
+    "dirty":  false,
+    "apiCodeFromCommit":  true,
+    "harnessChanges":  [
+
+                       ],
+    "measuredAt":  "2026-11-24T04:14:38Z",
+    "environment":  {
+                        "cpu":  "AMD Ryzen 5 5600H with Radeon Graphics (6 cores / 12 threads)",
+                        "ramGb":  13.9,
+                        "os":  "Microsoft Windows 11 Pro 10.0.26200",
+                        "docker":  "Docker 29.9.3, VM 12 CPU / 6.7 GB",
+                        "limits":  "api 2 CPU / 1 GB, sqlserver 2 CPU / 2 GB (benchmarks/docker-compose.bench.yml)",
+                        "sqlServer":  "16.0.4325.4 Developer Edition (64-bit)",
+                        "redis":  "Redis server v=7.4.12 sha=00000000:0 malloc=jemalloc-5.3.0 bits=64 build=97c9b7ac751c8f00 (cache provider for this mode: None)",
+                        "k6":  "k6 v0.54.0 (commit/baba871c8a, go1.23.1, linux/amd64)",
+                        "otherContainers":  [
+
+                                            ],
+                        "loadGenerator":  "k6 in a container on the same machine and Docker network as the API; it competes for CPU (limitation)"
+                    },
+    "dataset":  {
+                    "links":  100000,
+                    "seed":  "deterministic: code(n) = Base62(n * 1000000007 mod 62^7), benchmarks/sql/seed.sql",
+                    "indexes":  "UX_short_links_code (unique, BIN2), IX_short_links_client_id_created_at"
+                },
+    "workload":  {
+                     "endpoint":  "GET /{code}, redirects not followed",
+                     "mix":  "80% hot (20% of links), 15% cold, 5% non-existent (404)",
+                     "vus":  20,
+                     "duration":  "60s",
+                     "warmUp":  "20s per run, excluded from numbers and from the DB query count",
+                     "runs":  3,
+                     "cacheTtl":  "Cache:LinkTtl default 1h, capped by link expiry (seed links never expire)",
+                     "analytics":  "Analytics:Enabled=false (older images: not implemented)"
+                 },
+    "runs":  [
+                 {
+                     "run":  1,
+                     "requests":  102114,
+                     "rps":  1701.7,
+                     "p50Ms":  9.5,
+                     "p95Ms":  30.67,
+                     "p99Ms":  49.47,
+                     "avgMs":  11.52,
+                     "maxMs":  84.06,
+                     "errorPercent":  0,
+                     "dbQueries":  102114,
+                     "dbQueriesPerReq":  1,
+                     "hitRatio":  null
+                 },
+                 {
+                     "run":  2,
+                     "requests":  104187,
+                     "rps":  1736,
+                     "p50Ms":  9.2,
+                     "p95Ms":  31.91,
+                     "p99Ms":  43.22,
+                     "avgMs":  11.29,
+                     "maxMs":  91.42,
+                     "errorPercent":  0,
+                     "dbQueries":  104187,
+                     "dbQueriesPerReq":  1,
+                     "hitRatio":  null
+                 },
+                 {
+                     "run":  3,
+                     "requests":  102791,
+                     "rps":  1712.9,
+                     "p50Ms":  9.48,
+                     "p95Ms":  29.11,
+                     "p99Ms":  44.58,
+                     "avgMs":  11.45,
+                     "maxMs":  70.33,
+                     "errorPercent":  0,
+                     "dbQueries":  102791,
+                     "dbQueriesPerReq":  1,
+                     "hitRatio":  null
+                 }
+             ],
+    "median":  {
+                   "rps":  1712.9,
+                   "p50Ms":  9.48,
+                   "p95Ms":  30.67,
+                   "p99Ms":  44.58,
+                   "errorPercent":  0,
+                   "dbQueriesPerReq":  1,
+                   "hitRatio":  null
+               },
+    "spreadPercentBetweenRuns":  {
+                                     "rps":  2,
+                                     "p50Ms":  3.2,
+                                     "p95Ms":  9.1
+                                 }
+}

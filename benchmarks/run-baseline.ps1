@@ -15,6 +15,7 @@
     B  Redis cache warm, analytics off    (cache-aside)
     D  Redis stopped before warm-up       (fail-open: every request falls back to SQL)
     E  Redis cache warm, analytics on     (one synchronous INSERT per 302; compare with B)
+    F  Redis cache warm, async analytics  (queue + background batch writer, US-13; compare with B and E)
   Images older than the cache (the SQL baseline commit) ignore the settings, so use mode A for them.
 
   Needs Docker Desktop running and a .env file (copy .env.example).
@@ -26,7 +27,7 @@
 #>
 param(
     [string]$Commit = "HEAD",
-    [ValidateSet("A", "B", "D", "E")]
+    [ValidateSet("A", "B", "D", "E", "F")]
     [string]$Mode = "A",
     [int]$Runs = 3,
     [int]$Vus = 20,
@@ -88,13 +89,15 @@ $env:BENCH_API_IMAGE = $image
 $env:API_PORT = "$ApiPort"
 
 $modeConfig = @{
-    A = @{ Cache = "None";  Analytics = "false"; Description = "no cache, analytics off" }
-    B = @{ Cache = "Redis"; Analytics = "false"; Description = "Redis cache-aside warm, analytics off" }
-    D = @{ Cache = "Redis"; Analytics = "false"; Description = "Redis stopped before warm-up, every request falls back to SQL" }
-    E = @{ Cache = "Redis"; Analytics = "true";  Description = "Redis cache-aside warm, synchronous click analytics on" }
+    A = @{ Cache = "None";  Analytics = "false"; AnalyticsMode = "Sync";  Description = "no cache, analytics off" }
+    B = @{ Cache = "Redis"; Analytics = "false"; AnalyticsMode = "Sync";  Description = "Redis cache-aside warm, analytics off" }
+    D = @{ Cache = "Redis"; Analytics = "false"; AnalyticsMode = "Sync";  Description = "Redis stopped before warm-up, every request falls back to SQL" }
+    E = @{ Cache = "Redis"; Analytics = "true";  AnalyticsMode = "Sync";  Description = "Redis cache-aside warm, synchronous click analytics on" }
+    F = @{ Cache = "Redis"; Analytics = "true";  AnalyticsMode = "Async"; Description = "Redis cache-aside warm, async click analytics (queue + batch writer)" }
 }[$Mode]
 $env:BENCH_CACHE_PROVIDER = $modeConfig.Cache
 $env:BENCH_ANALYTICS = $modeConfig.Analytics
+$env:BENCH_ANALYTICS_MODE = $modeConfig.AnalyticsMode
 $compose = @("compose", "-f", "docker-compose.yml", "-f", "benchmarks/docker-compose.bench.yml")
 
 Write-Host "== Building $image"
@@ -201,7 +204,7 @@ $spread = [ordered]@{
 $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
 $os = Get-CimInstance Win32_OperatingSystem
 $dockerInfo = docker info --format '{{json .}}' | ConvertFrom-Json
-$k6Version = (docker run --rm grafana/k6:0.54.0 version | Select-Object -First 1).Trim()
+$k6Version = (docker run --rm --name url-shortener-k6-version grafana/k6:0.54.0 version | Select-Object -First 1).Trim()
 
 $result = [ordered]@{
     name        = $Name
@@ -237,7 +240,7 @@ $result = [ordered]@{
         warmUp    = "$WarmUp per run, excluded from numbers and from the DB query count"
         runs      = $Runs
         cacheTtl  = "Cache:LinkTtl default 1h, capped by link expiry (seed links never expire)"
-        analytics = "Analytics:Enabled=$($modeConfig.Analytics) (older images: not implemented)"
+        analytics = "Analytics:Enabled=$($modeConfig.Analytics), Mode=$($modeConfig.AnalyticsMode) (older images ignore what they do not have)"
     }
     runs        = $runResults
     median      = $median

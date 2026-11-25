@@ -128,8 +128,8 @@ public class CacheAsideTests(ApiFactory api)
 
     private sealed class ThrowingOnRemoveCache : ILinkCache
     {
-        public Task<RedirectTarget?> GetAsync(string code, CancellationToken ct) =>
-            Task.FromResult<RedirectTarget?>(null);
+        public Task<CacheLookup> GetAsync(string code, CancellationToken ct) =>
+            Task.FromResult(CacheLookup.Miss);
 
         public Task SetAsync(string code, RedirectTarget target, TimeSpan ttl, CancellationToken ct) =>
             Task.CompletedTask;

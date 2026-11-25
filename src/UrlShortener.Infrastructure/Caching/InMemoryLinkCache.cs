@@ -14,20 +14,20 @@ public sealed class InMemoryLinkCache(int capacity, TimeProvider time) : ILinkCa
 
     public int Count => _lru.Count;
 
-    public Task<RedirectTarget?> GetAsync(string code, CancellationToken ct)
+    public Task<CacheLookup> GetAsync(string code, CancellationToken ct)
     {
         if (_lru.TryGet(code, out var entry))
         {
             if (entry.ExpiresAt > time.GetUtcNow())
             {
-                return Task.FromResult<RedirectTarget?>(entry.Target);
+                return Task.FromResult(CacheLookup.Hit(entry.Target));
             }
 
             // Expired entries are dropped lazily on read; LRU eviction handles the rest.
             _lru.Remove(code);
         }
 
-        return Task.FromResult<RedirectTarget?>(null);
+        return Task.FromResult(CacheLookup.Miss);
     }
 
     public Task SetAsync(string code, RedirectTarget target, TimeSpan ttl, CancellationToken ct)

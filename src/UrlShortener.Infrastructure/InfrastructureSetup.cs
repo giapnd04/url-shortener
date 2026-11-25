@@ -29,8 +29,15 @@ public static class InfrastructureSetup
         services.AddSingleton<IShortCodeGenerator, RandomBase62CodeGenerator>();
         services.AddScoped<LinkService>();
         services.AddSingleton<CacheStats>();
+        services.AddScoped<RedirectDiagnostics>();
         services.AddOptions<AnalyticsOptions>().BindConfiguration(AnalyticsOptions.Section);
         services.AddScoped<ClickRecorder>();
+        // US-13: one queue and one writer per process. The writer is a singleton so /_diag can read
+        // its counters, and registered as the hosted service so the host starts and stops it.
+        services.AddSingleton<ClickQueue>();
+        services.AddSingleton<IClickBatchWriter, SqlClickBatchWriter>();
+        services.AddSingleton<ClickWriterService>();
+        services.AddHostedService(sp => sp.GetRequiredService<ClickWriterService>());
         services.AddScoped<ClickStatsService>();
 
         // Resolve the connection string lazily so tests can override configuration.
@@ -113,7 +120,8 @@ public static class InfrastructureSetup
             return cache is NullLinkCache
                 ? sql
                 : new CachedRedirectReader(sql, cache, sp.GetRequiredService<TimeProvider>(),
-                    sp.GetRequiredService<IOptions<CacheOptions>>(), sp.GetRequiredService<CacheStats>());
+                    sp.GetRequiredService<IOptions<CacheOptions>>(), sp.GetRequiredService<CacheStats>(),
+                    sp.GetRequiredService<RedirectDiagnostics>());
         });
     }
 }

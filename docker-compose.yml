@@ -43,6 +43,10 @@ services:
       ASPNETCORE_ENVIRONMENT: Production
       ConnectionStrings__UrlShortener: "Server=sqlserver;Database=UrlShortener;User Id=sa;Password=${MSSQL_SA_PASSWORD};TrustServerCertificate=True"
       ConnectionStrings__Redis: "redis:6379"
+      # Fresh clone + `docker compose up` must work: create/upgrade the schema at startup (single instance).
+      Database__MigrateOnStartup: "true"
+      # Optional first API client; empty means none is created. Never commit a real key.
+      Bootstrap__ApiKey: ${BOOTSTRAP_API_KEY:-}
     ports:
       # Host port is configurable (API_PORT) in case 8080 is taken on the host.
       - "${API_PORT:-8080}:8080"

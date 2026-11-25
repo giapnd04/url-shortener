@@ -19,10 +19,12 @@ services:
     mem_limit: 1g
     environment:
       Diagnostics__ExposeQueryCounter: "true"
-      # Set by run-baseline.ps1 -Mode (A: None/off, B and D: Redis/off, E: Redis/on).
+      # Set by run-baseline.ps1 -Mode (A: None/off, B and D: Redis/off, E: Redis/on sync, F: Redis/on async).
       # Older images (the SQL baseline commit) simply ignore these settings.
       Cache__Provider: ${BENCH_CACHE_PROVIDER:-None}
       Analytics__Enabled: ${BENCH_ANALYTICS:-false}
+      # E measures the synchronous INSERT, F the queue + background writer (US-13).
+      Analytics__Mode: ${BENCH_ANALYTICS_MODE:-Sync}
       # Keep per-request logging out of the measurement.
       Logging__LogLevel__Default: Warning
       Logging__LogLevel__Microsoft.EntityFrameworkCore: Warning

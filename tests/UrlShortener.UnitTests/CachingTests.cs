@@ -37,10 +37,10 @@ public class CachingTests
         var cache = new InMemoryLinkCache(10, time);
         await cache.SetAsync("abc1234", Target(), TimeSpan.FromMinutes(5), default);
 
-        Assert.NotNull(await cache.GetAsync("abc1234", default));
+        Assert.Equal(CacheStatus.Hit, (await cache.GetAsync("abc1234", default)).Status);
 
         time.Advance(TimeSpan.FromMinutes(6));
-        Assert.Null(await cache.GetAsync("abc1234", default));
+        Assert.Equal(CacheStatus.Miss, (await cache.GetAsync("abc1234", default)).Status);
         Assert.Equal(0, cache.Count);
     }
 
@@ -54,8 +54,8 @@ public class CachingTests
 
         await cache.SetAsync("c", Target(), TimeSpan.FromHours(1), default);
 
-        Assert.NotNull(await cache.GetAsync("a", default));
-        Assert.Null(await cache.GetAsync("b", default));
+        Assert.Equal(CacheStatus.Hit, (await cache.GetAsync("a", default)).Status);
+        Assert.Equal(CacheStatus.Miss, (await cache.GetAsync("b", default)).Status);
     }
 
     [Fact]

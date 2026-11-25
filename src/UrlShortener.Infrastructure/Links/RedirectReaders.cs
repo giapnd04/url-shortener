@@ -34,20 +34,28 @@ public sealed class CachedRedirectReader(
     ILinkCache cache,
     TimeProvider time,
     IOptions<CacheOptions> options,
-    CacheStats stats) : IRedirectReader
+    CacheStats stats,
+    RedirectDiagnostics diagnostics) : IRedirectReader
 {
     public async Task<RedirectTarget?> GetAsync(string code, CancellationToken ct)
     {
-        var cached = await cache.GetAsync(code, ct);
-        if (cached is not null)
+        var lookup = await cache.GetAsync(code, ct);
+        // Recorded for the request log line (US-12: CacheResult hit/miss/error).
+        diagnostics.CacheResult = lookup.Status;
+        if (lookup.Status == CacheStatus.Hit)
         {
             stats.Hit();
-            return cached;
+            return lookup.Target;
         }
 
-        // Counted as a miss also when Redis is down or the code does not exist: hit ratio is
-        // "share of redirects answered without SQL", which is what the benchmark compares.
+        // Errors also count as misses for the hit ratio ("share of redirects answered without SQL"),
+        // and are counted separately so a Redis outage is visible on its own.
         stats.Miss();
+        if (lookup.Status == CacheStatus.Error)
+        {
+            stats.Error();
+        }
+
         var target = await inner.GetAsync(code, ct);
         if (target is null)
         {
