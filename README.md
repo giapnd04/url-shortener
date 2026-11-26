@@ -95,11 +95,74 @@ curl.exe -s -H "X-Api-Key: change-me-local-bootstrap-key" -H "Content-Type: appl
 - Mỗi request có một dòng log khi kết thúc, gồm method, route template, status, thời gian (ms) và CacheResult (hit, miss, error, none). Health check chỉ log ở mức Debug.
 - Lỗi không lường trước (GlobalExceptionHandler): log Error kèm exception, client chỉ nhận 500 ProblemDetails với traceId, không có chi tiết exception. Client tự ngắt kết nối thì chỉ log Information.
 
-Chạy test. Integration test dùng Testcontainers dựng SQL Server 2022 và Redis 7.4 thật, nên cần Docker Desktop đang chạy:
+## Chạy test
+
+Integration test dùng Testcontainers dựng SQL Server 2022 và Redis 7.4 thật, nên cần Docker Desktop đang chạy:
 
 ```powershell
 dotnet test UrlShortener.sln
 ```
+
+## Luồng request
+
+### Hiện tại (docker compose trên một máy)
+
+Đây là đường đi thật của GET /{code} trong code hiện tại. Không có load balancer, CDN hay TLS: compose chỉ mở HTTP ở cổng 8080 của máy.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant B as Trình duyệt
+    participant D as DNS / hosts
+    participant A as API (Kestrel :8080, container api)
+    participant R as Redis (container redis)
+    participant S as SQL Server (container sqlserver)
+    participant W as ClickWriterService (nền)
+    participant T as Trang đích
+
+    B->>D: phân giải localhost
+    D-->>B: 127.0.0.1
+    B->>A: TCP connect (keep-alive dùng lại kết nối cho request sau)
+    B->>A: GET /aB3dE9x
+    Note over A: RequestLoggingMiddleware: gán X-Correlation-Id, bắt đầu đo giờ
+    Note over A: Route constraint ^[0-9A-Za-z]{7}$: đường dẫn sai thì 404, không chạm Redis hay SQL
+    A->>R: GET link:v2:aB3dE9x
+    alt hit
+        R-->>A: {i, t, s, e, u}
+    else miss hoặc Redis lỗi (fail-open)
+        R-->>A: nil / lỗi sau tối đa 250 ms
+        A->>S: SELECT TOP(1) ... WHERE code = @code (index seek UX_short_links_code)
+        S-->>A: target, expires_at, disabled_at
+        A->>R: SET link:v2:aB3dE9x, TTL = min(1 giờ, thời gian còn lại của link)
+    end
+    Note over A: disabled hoặc hết hạn thì 410, không có thì 404
+    A-)W: TryEnqueue(click) vào Channel, không chờ
+    A-->>B: 302 Found, Location: trang đích, X-Correlation-Id
+    Note over A: dòng log kết thúc: status, ms, cache hit/miss/error
+    B->>T: GET trang đích (kết nối mới tới host khác)
+    W->>S: INSERT click_events theo lô (500 dòng hoặc mỗi 1 giây)
+```
+
+### Khi chạy production (chưa làm, chỉ là hướng thiết kế)
+
+```mermaid
+flowchart LR
+    U[Trình duyệt] -->|DNS: sho.rt trả IP của LB| LB[Load balancer / reverse proxy<br/>kết thúc TLS, thêm X-Forwarded-For]
+    U -.->|302 không được cache ở CDN và trình duyệt,<br/>nên mọi click đều tới server| LB
+    LB --> A1[API instance 1]
+    LB --> A2[API instance 2]
+    A1 --> R[(Redis dùng chung)]
+    A2 --> R
+    A1 --> S[(SQL Server)]
+    A2 --> S
+```
+
+Những điểm thay đổi so với hiện tại, chưa làm:
+- TLS kết thúc ở load balancer; API sau LB đọc X-Forwarded-For và X-Forwarded-Proto (ForwardedHeaders) để biết IP thật của client và scheme thật.
+- Correlation id nên được tạo ngay ở LB, để log của LB và log của API nối với nhau. API đã nhận sẵn header X-Correlation-Id nếu có.
+- Nhiều instance thì cache Memory không dùng được (mỗi instance một bản riêng), nên phải dùng Redis. Mỗi instance có hàng đợi click riêng trong bộ nhớ, nên khi một instance crash chỉ mất click của instance đó.
+- Migration phải chạy thành một bước riêng trước khi deploy, không chạy lúc khởi động (nhiều instance cùng migrate sẽ tranh nhau).
+- CDN không giúp được redirect 302 (ADR-002 chọn 302 để mọi click tới server). Nếu muốn CDN cache thì phải dùng 301 hoặc Cache-Control, và đổi lại là mất khả năng đếm click và sửa link.
 
 ## Tài liệu
 
